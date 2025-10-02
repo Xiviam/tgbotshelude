@@ -218,22 +218,6 @@ bot.command("login", async (ctx) => {
   }
 });
 
-bot.on("message:text", async (ctx) => {
-  const text = ctx.message.text;
-
-  if (text === "📅 Расписание на сегодня") {
-    const date = getLocalDateString(0);
-    const schedule = await getSchedule(ctx.chat.id, date);
-    return ctx.reply(schedule);
-  }
-
-  if (text === "📅 Расписание на завтра") {
-    const date = getLocalDateString(1);
-    const schedule = await getSchedule(ctx.chat.id, date);
-    return ctx.reply(schedule);
-  }
-});
-
 bot.command("today", async (ctx) => {
   const date = getLocalDateString(0);
   const schedule = await getSchedule(ctx.chat.id, date);
@@ -250,6 +234,22 @@ bot.command("start", async (ctx) => {
   ctx.reply(`Авторизация: /login <name> <pass>\n
 Узнать расписание на сегодня: /today\n
 Узнать расписание на завтра: /tomorrow`)
+});
+
+bot.on("message:text", async (ctx) => {
+  const text = ctx.message.text;
+
+  if (text === "📅 Расписание на сегодня") {
+    const date = getLocalDateString(0);
+    const schedule = await getSchedule(ctx.chat.id, date);
+    return ctx.reply(schedule);
+  }
+
+  if (text === "📅 Расписание на завтра") {
+    const date = getLocalDateString(1);
+    const schedule = await getSchedule(ctx.chat.id, date);
+    return ctx.reply(schedule);
+  }
 });
 
 (async () => {

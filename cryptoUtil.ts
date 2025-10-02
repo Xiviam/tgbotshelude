@@ -3,7 +3,7 @@ import crypto from "crypto";
 const key = process.env.ENCRYPTION_KEY!;
 const algorithm = "aes-256-cbc";
 
-export function encrypt(text: string): string {
+export function encrypt(text: string) {
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv(algorithm, Buffer.from(key, "hex"), iv);
   let encrypted = cipher.update(text, "utf8", "hex");
@@ -11,7 +11,7 @@ export function encrypt(text: string): string {
   return iv.toString("hex") + ":" + encrypted;
 }
 
-export function decrypt(text: string): string {
+export function decrypt(text: string) {
   const [ivHex, encrypted] = text.split(":");
   const iv = Buffer.from(ivHex, "hex");
   const decipher = crypto.createDecipheriv(algorithm, Buffer.from(key, "hex"), iv);

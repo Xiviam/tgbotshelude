@@ -10,28 +10,19 @@ export const sequelize = new Sequelize(
   {
     host: process.env.DB_HOST!,
     dialect: "mysql",
-    logging: console.log, // включено для отладки
+    logging: console.log,
   }
 );
 
-export const User = sequelize.define(
-  "User",
-  {
-    chatId: {
-      type: DataTypes.BIGINT,
-      allowNull: false,
-      unique: true,
-      primaryKey: true,
-    },
-    login: { type: DataTypes.STRING, allowNull: false },
-    password: { type: DataTypes.STRING, allowNull: false },
-    accessToken: { type: DataTypes.STRING, allowNull: true },
-    refreshToken: { type: DataTypes.STRING, allowNull: true },
-    expiresAt: { type: DataTypes.BIGINT, allowNull: true },
-    city_data: { type: DataTypes.TEXT, allowNull: true },
-  },
-  {
-    tableName: "Users",
-    timestamps: true,
-  }
-);
+export const User = sequelize.define("User", {
+  chatId: { type: DataTypes.BIGINT, allowNull: false, unique: true, primaryKey: true },
+  login: { type: DataTypes.STRING, allowNull: false },
+  password: { type: DataTypes.STRING, allowNull: false },
+  accessToken: { type: DataTypes.TEXT, allowNull: true },
+  refreshToken: { type: DataTypes.TEXT, allowNull: true },
+  expiresAt: { type: DataTypes.BIGINT, allowNull: true },
+  city_data: { type: DataTypes.TEXT, allowNull: true },
+}, {
+  tableName: "Users",
+  timestamps: true,
+});

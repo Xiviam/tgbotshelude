@@ -1,14 +1,25 @@
 import { Bot } from "grammy";
 import axios from "axios";
 import dotenv from "dotenv";
+import { Keyboard } from "grammy";
 dotenv.config();
 
 import { sequelize, User } from "./db";
 import { encrypt } from "./cryptoUtil";
+import { Model } from "sequelize";
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 
-// 🔹 Получение локальной даты YYYY-MM-DD (+ смещение по дням)
+interface IUser extends Model {
+  chatId: number;
+  login: string;
+  password: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  city_data?: string;
+}
+
 function getLocalDateString(offsetDays = 0): string {
   const now = new Date();
   now.setDate(now.getDate() + offsetDays);
@@ -18,7 +29,6 @@ function getLocalDateString(offsetDays = 0): string {
   return `${year}-${month}-${day}`;
 }
 
-// 🔹 Планирование напоминаний
 function scheduleReminders(chatId: number, lessons: any[], date: string) {
   const now = new Date();
 
@@ -28,7 +38,6 @@ function scheduleReminders(chatId: number, lessons: any[], date: string) {
     const lessonTime = new Date(date + "T00:00:00");
     lessonTime.setHours(hour, minute, 0, 0);
 
-    // За 5 минут до пары
     const reminderTime = new Date(lessonTime.getTime() - 5 * 60 * 1000);
     const diff = reminderTime.getTime() - now.getTime();
 
@@ -39,32 +48,17 @@ function scheduleReminders(chatId: number, lessons: any[], date: string) {
           `⏰ Через 5 минут начнется пара!\n\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}`
         );
       }, diff);
-
-      console.log(
-        `Напоминание для чата ${chatId} запланировано на ${reminderTime.toLocaleString()}`
-      );
+      console.log(`Напоминание для чата ${chatId} запланировано на ${reminderTime.toLocaleString()}`);
     }
   }
 }
 
-// 🔹 Логин через API и сохранение в БД
 async function loginAndSave(chatId: number, username: string, password: string) {
   try {
     const res = await axios.post(
       "https://msapi.top-academy.ru/api/v2/auth/login",
-      {
-        application_key: process.env.APPLICATION_KEY,
-        id_city: null,
-        username,
-        password,
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Origin: "https://journal.top-academy.ru",
-          Referer: "https://journal.top-academy.ru",
-        },
-      }
+      { application_key: process.env.APPLICATION_KEY, id_city: null, username, password },
+      { headers: { "Content-Type": "application/json", Origin: "https://journal.top-academy.ru", Referer: "https://journal.top-academy.ru" } }
     );
 
     const auth = res.data;
@@ -87,54 +81,119 @@ async function loginAndSave(chatId: number, username: string, password: string) 
   }
 }
 
-// 🔹 Получение расписания на произвольную дату
+async function refreshTokenIfNeeded(user: any) {
+  const now = Date.now();
+  const expiresAt = user.getDataValue("expiresAt") || 0;
+
+  if (now < expiresAt) return user.getDataValue("accessToken");
+
+  try {
+    const res = await axios.post(
+      "https://msapi.top-academy.ru/api/v2/auth/refresh",
+      {
+        refresh_token: user.getDataValue("refreshToken"),
+        application_key: process.env.APPLICATION_KEY,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://journal.top-academy.ru",
+          Referer: "https://journal.top-academy.ru",
+        },
+      }
+    );
+
+    const auth = res.data;
+    await User.update(
+      {
+        accessToken: auth.access_token,
+        refreshToken: auth.refresh_token,
+        expiresAt: Date.now() + auth.expires_in_access * 1000,
+      },
+      { where: { chatId: user.getDataValue("chatId") } }
+    );
+
+    return auth.access_token;
+  } catch (err: any) {
+    console.error("Refresh token error:", err.response?.data || err.message);
+    throw new Error("Не удалось обновить токен");
+  }
+}
+
+
 async function getSchedule(chatId: number, date: string) {
   const user = await User.findOne({ where: { chatId } });
   if (!user) return "❌ Сначала авторизуйтесь";
 
-  const accessToken = user.getDataValue("accessToken");
+  let accessToken = user.getDataValue("accessToken");
 
   try {
+    accessToken = await refreshTokenIfNeeded(user);
+
     const res = await axios.get(
       "https://msapi.top-academy.ru/api/v2/schedule/operations/get-by-date",
       {
         params: { date_filter: date },
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          Accept: "application/json, text/plain, */*",
           Origin: "https://journal.top-academy.ru",
-          Referer: "https://journal.top-academy.ru/",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+          Referer: "https://journal.top-academy.ru",
         },
       }
     );
 
     const lessons = res.data;
-    if (!lessons || lessons.length === 0) {
-      return `📭 На ${date} занятий нет`;
-    }
+    if (!lessons || lessons.length === 0) return `📭 На ${date} занятий нет`;
 
-    // Планируем напоминания
     scheduleReminders(chatId, lessons, date);
 
     let text = `📅 Расписание на ${date}:\n\n`;
     for (const lesson of lessons) {
-      text +=
-        `🔢 Пара: ${lesson.lesson}\n` +
-        `⏰ ${lesson.started_at} – ${lesson.finished_at}\n` +
-        `📖 ${lesson.subject_name}\n` +
-        `👨‍🏫 ${lesson.teacher_name}\n\n`
+      text += `🔢 Пара: ${lesson.lesson}\n⏰ ${lesson.started_at} – ${lesson.finished_at}\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}\n\n`;
     }
 
     return text.trim();
   } catch (err: any) {
-    console.error(err.response?.data || err.message);
+    if (err.response?.status === 403) {
+      try {
+        console.log("⚠️ 403 Forbidden — пробуем обновить токен и повторить запрос");
+        accessToken = await refreshTokenIfNeeded(user);
+
+        const retryRes = await axios.get(
+          "https://msapi.top-academy.ru/api/v2/schedule/operations/get-by-date",
+          {
+            params: { date_filter: date },
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Origin: "https://journal.top-academy.ru",
+              Referer: "https://journal.top-academy.ru",
+            },
+          }
+        );
+
+        const lessons = retryRes.data;
+        if (!lessons || lessons.length === 0) return `📭 На ${date} занятий нет`;
+
+        scheduleReminders(chatId, lessons, date);
+
+        let text = `📅 Расписание на ${date}:\n\n`;
+        for (const lesson of lessons) {
+          text += `🔢 Пара: ${lesson.lesson}\n⏰ ${lesson.started_at} – ${lesson.finished_at}\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}\n\n`;
+        }
+
+        return text.trim();
+      } catch (retryErr: any) {
+        console.error("Повторный запрос после обновления токена не удался:", retryErr.response?.data || retryErr.message);
+        return "❌ Не удалось получить расписание (403 Forbidden)";
+      }
+    }
+
+    console.error("Ошибка при получении расписания:", err.response?.data || err.message);
     return "❌ Не удалось получить расписание";
   }
 }
 
-// 🔹 Команда /login
+
 bot.command("login", async (ctx) => {
   const text = ctx.message?.text;
   if (!text) return ctx.reply("❌ Текст команды не найден");
@@ -148,30 +207,54 @@ bot.command("login", async (ctx) => {
 
   try {
     await loginAndSave(ctx.chat.id, username, password);
-    ctx.reply("✅ Успешно авторизованы!");
+    ctx.reply("✅ Успешно авторизованы!", {
+      reply_markup: new Keyboard()
+        .text("📅 Расписание на сегодня")
+        .text("📅 Расписание на завтра")
+    });
+
   } catch {
     ctx.reply("❌ Не удалось авторизоваться");
   }
 });
 
-// 🔹 Команда /today
+bot.on("message:text", async (ctx) => {
+  const text = ctx.message.text;
+
+  if (text === "📅 Расписание на сегодня") {
+    const date = getLocalDateString(0);
+    const schedule = await getSchedule(ctx.chat.id, date);
+    return ctx.reply(schedule);
+  }
+
+  if (text === "📅 Расписание на завтра") {
+    const date = getLocalDateString(1);
+    const schedule = await getSchedule(ctx.chat.id, date);
+    return ctx.reply(schedule);
+  }
+});
+
 bot.command("today", async (ctx) => {
   const date = getLocalDateString(0);
   const schedule = await getSchedule(ctx.chat.id, date);
   ctx.reply(schedule);
 });
 
-// 🔹 Команда /tomorrow
 bot.command("tomorrow", async (ctx) => {
   const date = getLocalDateString(1);
   const schedule = await getSchedule(ctx.chat.id, date);
   ctx.reply(schedule);
 });
 
-// 🔹 Старт бота
+bot.command("start", async (ctx) => {
+  ctx.reply(`Авторизация: /login <name> <pass>\n
+Узнать расписание на сегодня: /today\n
+Узнать расписание на завтра: /tomorrow`)
+});
+
 (async () => {
   await sequelize.authenticate();
-  await User.sync();
+  // await User.sync({ alter: true });
   console.log("✅ DB connected, bot starting...");
   bot.start();
 })();

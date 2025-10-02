@@ -35,10 +35,12 @@ function scheduleReminders(chatId: number, lessons: any[], date: string) {
   for (const lesson of lessons) {
     const [hour, minute] = lesson.started_at.split(":").map(Number);
 
-    const lessonTime = new Date(date + "T00:00:00");
-    lessonTime.setHours(hour, minute, 0, 0);
+    const lessonTime = new Date(
+      new Date(`${date}T${hour.toString().padStart(2,"0")}:${minute.toString().padStart(2,"0")}:00+03:00`)
+    );
 
     const reminderTime = new Date(lessonTime.getTime() - 5 * 60 * 1000);
+
     const diff = reminderTime.getTime() - now.getTime();
 
     if (diff > 0) {
@@ -48,10 +50,18 @@ function scheduleReminders(chatId: number, lessons: any[], date: string) {
           `⏰ Через 5 минут начнется пара!\n\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}`
         );
       }, diff);
-      console.log(`Напоминание для чата ${chatId} запланировано на ${reminderTime.toLocaleString()}`);
+
+      console.log(
+        `✅ Напоминание для чата ${chatId} запланировано на ${reminderTime.toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })}`
+      );
+    } else {
+      console.log(
+        `⚠️ Пара "${lesson.subject_name}" уже началась или reminderTime < now`
+      );
     }
   }
 }
+
 
 async function loginAndSave(chatId: number, username: string, password: string) {
   try {
@@ -235,6 +245,7 @@ bot.command("start", async (ctx) => {
 Узнать расписание на сегодня: /today\n
 Узнать расписание на завтра: /tomorrow`)
 });
+
 
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;

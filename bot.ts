@@ -10,6 +10,8 @@ import { Model } from "sequelize";
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 
+const scheduledReminders: Map<string, NodeJS.Timeout> = new Map();
+
 interface IUser extends Model {
   chatId: number;
   login: string;
@@ -40,28 +42,84 @@ function scheduleReminders(chatId: number, lessons: any[], date: string) {
     );
 
     const reminderTime = new Date(lessonTime.getTime() - 5 * 60 * 1000);
-
     const diff = reminderTime.getTime() - now.getTime();
 
+    const reminderKey = `${chatId}_${date}_${lesson.lesson}_${lesson.started_at}`;
+
+    if (scheduledReminders.has(reminderKey)) {
+      console.log(`⏩ Напоминание ${reminderKey} уже существует, пропускаем`);
+      continue;
+    }
+
     if (diff > 0) {
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         bot.api.sendMessage(
           chatId,
           `⏰ Через 5 минут начнется пара!\n\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}`
         );
+
+        // Очистка после срабатывания
+        scheduledReminders.delete(reminderKey);
       }, diff);
 
+      scheduledReminders.set(reminderKey, timeoutId);
+
       console.log(
-        `✅ Напоминание для чата ${chatId} запланировано на ${reminderTime.toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })}`
+        `✅ Напоминание для чата ${chatId} установлено на ${reminderTime.toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })}`
       );
     } else {
-      console.log(
-        `⚠️ Пара "${lesson.subject_name}" уже началась или reminderTime < now`
-      );
+      console.log(`⚠️ Пара "${lesson.subject_name}" уже началась или reminderTime < now`);
     }
   }
 }
 
+function startDailyCleanup() {
+  const now = new Date();
+
+  const nowMoscow = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Moscow" }));
+
+  const nextCleanup = new Date(
+    nowMoscow.getFullYear(),
+    nowMoscow.getMonth(),
+    nowMoscow.getDate(),
+    0, 10, 0
+  );
+
+  if (nowMoscow.getTime() > nextCleanup.getTime()) {
+    nextCleanup.setDate(nextCleanup.getDate() + 1);
+  }
+
+  const delay = nextCleanup.getTime() - nowMoscow.getTime();
+
+  setTimeout(() => {
+    cleanupOldReminders(); // первая очистка
+    setInterval(cleanupOldReminders, 24 * 60 * 60 * 1000); // затем каждые сутки
+  }, delay);
+
+  console.log(`🕛 Очистка напоминаний запланирована на ${nextCleanup.toLocaleString("ru-RU", { timeZone: "Europe/Moscow" })}`);
+}
+
+function cleanupOldReminders() {
+  const now = Date.now();
+
+  for (const [key, timeoutId] of scheduledReminders.entries()) {
+    const parts = key.split("_");
+    const date = parts[1]; // YYYY-MM-DD
+    const lessonDate = new Date(`${date}T23:59:59+03:00`).getTime();
+
+    if (lessonDate < now) {
+      clearTimeout(timeoutId);
+      scheduledReminders.delete(key);
+      console.log(`🧹 Удалено просроченное напоминание: ${key}`);
+    }
+  }
+
+  console.log(`✅ Очистка завершена. Активных напоминаний: ${scheduledReminders.size}`);
+}
+
+// ==========================
+// 🔹 Авторизация и расписание
+// ==========================
 
 async function loginAndSave(chatId: number, username: string, password: string) {
   try {
@@ -130,7 +188,6 @@ async function refreshTokenIfNeeded(user: any) {
   }
 }
 
-
 async function getSchedule(chatId: number, date: string) {
   const user = await User.findOne({ where: { chatId } });
   if (!user) return "❌ Сначала авторизуйтесь";
@@ -164,45 +221,37 @@ async function getSchedule(chatId: number, date: string) {
 
     return text.trim();
   } catch (err: any) {
-    if (err.response?.status === 403) {
-      try {
-        console.log("⚠️ 403 Forbidden — пробуем обновить токен и повторить запрос");
-        accessToken = await refreshTokenIfNeeded(user);
-
-        const retryRes = await axios.get(
-          "https://msapi.top-academy.ru/api/v2/schedule/operations/get-by-date",
-          {
-            params: { date_filter: date },
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              Origin: "https://journal.top-academy.ru",
-              Referer: "https://journal.top-academy.ru",
-            },
-          }
-        );
-
-        const lessons = retryRes.data;
-        if (!lessons || lessons.length === 0) return `📭 На ${date} занятий нет`;
-
-        scheduleReminders(chatId, lessons, date);
-
-        let text = `📅 Расписание на ${date}:\n\n`;
-        for (const lesson of lessons) {
-          text += `🔢 Пара: ${lesson.lesson}\n⏰ ${lesson.started_at} – ${lesson.finished_at}\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}\n\n`;
-        }
-
-        return text.trim();
-      } catch (retryErr: any) {
-        console.error("Повторный запрос после обновления токена не удался:", retryErr.response?.data || retryErr.message);
-        return "❌ Не удалось получить расписание (403 Forbidden)";
-      }
-    }
-
     console.error("Ошибка при получении расписания:", err.response?.data || err.message);
     return "❌ Не удалось получить расписание";
   }
 }
 
+function createTestSchedule(date: string): any[] {
+  const now = new Date();
+  const testLessons = [
+    {
+      lesson: 1,
+      started_at: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes() + 6).padStart(2, "0")}`,
+      finished_at: `${String(now.getHours() + 1).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+      subject_name: "Test Subject 1",
+      teacher_name: "Test Teacher 1",
+      room_name: "Room 101"
+    },
+    {
+      lesson: 2,
+      started_at: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes() + 8).padStart(2, "0")}`,
+      finished_at: `${String(now.getHours() + 2).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+      subject_name: "Test Subject 2",
+      teacher_name: "Test Teacher 2", 
+      room_name: "Room 102"
+    }
+  ];
+  return testLessons;
+}
+
+// ==========================
+// 🔹 Команды бота
+// ==========================
 
 bot.command("login", async (ctx) => {
   const text = ctx.message?.text;
@@ -243,9 +292,8 @@ bot.command("tomorrow", async (ctx) => {
 bot.command("start", async (ctx) => {
   ctx.reply(`Авторизация: /login <name> <pass>\n
 Узнать расписание на сегодня: /today\n
-Узнать расписание на завтра: /tomorrow`)
+Узнать расписание на завтра: /tomorrow`);
 });
-
 
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
@@ -265,7 +313,7 @@ bot.on("message:text", async (ctx) => {
 
 (async () => {
   await sequelize.authenticate();
-  // await User.sync({ alter: true });
   console.log("✅ DB connected, bot starting...");
+  startDailyCleanup(); // запуск автоочистки
   bot.start();
 })();

@@ -55,7 +55,7 @@ function scheduleReminders(chatId: number, lessons: any[], date: string) {
       const timeoutId = setTimeout(() => {
         bot.api.sendMessage(
           chatId,
-          `⏰ Через 5 минут начнется пара!\n\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}`
+          `⏰ Через 5 минут начнется пара!\n\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n`
         );
 
         // Очистка после срабатывания
@@ -216,7 +216,7 @@ async function getSchedule(chatId: number, date: string) {
 
     let text = `📅 Расписание на ${date}:\n\n`;
     for (const lesson of lessons) {
-      text += `🔢 Пара: ${lesson.lesson}\n⏰ ${lesson.started_at} – ${lesson.finished_at}\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n🏫 ${lesson.room_name}\n\n`;
+      text += `🔢 Пара: ${lesson.lesson}\n⏰ ${lesson.started_at} – ${lesson.finished_at}\n📖 ${lesson.subject_name}\n👨‍🏫 ${lesson.teacher_name}\n\n`;
     }
 
     return text.trim();
